@@ -53,13 +53,14 @@ class FaceDetector:
             print(f"Error conectando a ESP32: {e}")
             self.esp32_connected = False
     
-    def send_to_esp32(self, authorized):
-        """Enviar señal a ESP32"""
+    def send_to_esp32(self, authorized, username="unknown"):
+        """Enviar señal a ESP32 en formato status|username"""
         if self.esp32_connected:
             try:
-                signal = b'1' if authorized else b'0'
-                self.esp32.write(signal)
-                print(f"Señal enviada a ESP32: {'Autorizado' if authorized else 'No autorizado'}")
+                face_detected = "true" if authorized else "false"
+                data_to_send = f"{face_detected}|{username}\n"
+                self.esp32.write(data_to_send.encode('utf-8'))
+                print(f"Datos enviados a ESP32: {data_to_send.strip()}")
             except Exception as e:
                 print(f"Error enviando a ESP32: {e}")
     
@@ -171,6 +172,7 @@ class FaceDetector:
         """Reconocer rostros detectados con estabilización"""
         recognized_names = []
         authorized_detected = False
+        authorized_name = "unknown"
         current_detection = []
         
         for (x, y, w, h) in faces:
@@ -181,11 +183,11 @@ class FaceDetector:
             if hasattr(self, 'label_map') and self.label_map:
                 try:
                     label, confidence = self.recognizer.predict(roi_gray)
-                    
                     if confidence < 80:
                         name = self.label_map.get(label, "Desconocido")
                         if name != "Desconocido":
                             authorized_detected = True
+                            authorized_name = name
                             current_detection.append(True)
                         else:
                             current_detection.append(False)
@@ -213,18 +215,16 @@ class FaceDetector:
                 avg_confidence = sum(any(detection) for detection in recent_detections) / len(recent_detections)
                 authorized_detected = avg_confidence >= self.detection_threshold
         
-        return recognized_names, authorized_detected
+        return recognized_names, authorized_detected, authorized_name
     
     def draw_results(self, frame, faces_info):
         """Dibujar resultados en el frame"""
         for (x, y, w, h, name) in faces_info:
-            # Color según si está autorizado
             if name == "Desconocido":
                 color = (0, 0, 255)
             else:
                 color = (0, 255, 0)
             
-            # Dibujar rectángulo
             cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
             
             # Dibujar nombre
@@ -293,7 +293,7 @@ class FaceDetector:
             faces, gray = self.detect_faces(frame)
             
             # Reconocer rostros
-            faces_info, authorized = self.recognize_faces(faces, gray)
+            faces_info, authorized, username = self.recognize_faces(faces, gray)
             
             # Dibujar resultados
             frame = self.draw_results(frame, faces_info)
@@ -301,7 +301,7 @@ class FaceDetector:
             # Enviar señal a ESP32 si hay rostro autorizado
             current_time = time.time()
             if authorized and (current_time - last_esp32_signal > signal_cooldown):
-                self.send_to_esp32(True)
+                self.send_to_esp32(True, username)
                 last_esp32_signal = current_time
             elif not authorized and faces_info and (current_time - last_esp32_signal > signal_cooldown):
                 self.send_to_esp32(False)
